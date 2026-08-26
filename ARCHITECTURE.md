@@ -24,7 +24,7 @@ build a distributed systems project:
 
 ## System Diagram
 
-
+<img width="750" height="409" alt="image" src="https://github.com/user-attachments/assets/f7f4a428-746d-4daf-b786-f85cc1e18338" />
 
 
 ## Components
