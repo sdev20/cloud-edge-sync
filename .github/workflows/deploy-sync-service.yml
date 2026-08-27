@@ -50,7 +50,7 @@ jobs:
           az webapp sitecontainers update \
             --name ${{ env.WEBAPP_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --container-name ${{ env.IMAGE_NAME }} \
+            --container-name main \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
             --target-port 8080 \
             --system-assigned-identity true
