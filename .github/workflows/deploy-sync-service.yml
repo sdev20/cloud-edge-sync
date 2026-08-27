@@ -1,0 +1,49 @@
+name: Deploy SyncService.WebAPI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "SyncService.WebAPI/**"
+      - ".github/workflows/deploy-sync-service.yml"
+  workflow_dispatch:
+
+env:
+  ACR_NAME: <your-acr-name>          # e.g. cloudedgesyncacr (no dots/dashes)
+  IMAGE_NAME: sync-service-webapi
+  RESOURCE_GROUP: cloud-edge-sync-rg
+  WEBAPP_NAME: sync-service-webapi
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to ACR
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Build and push image
+        working-directory: SyncService.WebAPI
+        run: |
+          IMAGE_TAG=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker build -t "$IMAGE_TAG" -f Dockerfile .
+          docker push "$IMAGE_TAG"
+
+      - name: Point App Service at the new image
+        run: |
+          az webapp config container set \
+            --name ${{ env.WEBAPP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --container-image-name ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Restart App Service
+        run: az webapp restart --name ${{ env.WEBAPP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }}

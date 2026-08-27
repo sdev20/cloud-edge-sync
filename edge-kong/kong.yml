@@ -1,0 +1,14 @@
+_format_version: "3.0"
+
+services:
+  - name: edge-sync-service
+    # "edge-webapi" resolves via Docker's built-in DNS to the Edge.WebAPI
+    # container on the shared "edge-network" defined in docker-compose.yml.
+    url: http://edge-webapi:8080/api/instruments
+    routes:
+      - name: edge-sync-service-route
+        paths:
+          - /external/api/instruments
+        strip_path: true
+        methods:
+          - POST
