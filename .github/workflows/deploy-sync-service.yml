@@ -47,10 +47,13 @@ jobs:
 
       - name: Point App Service at the new image
         run: |
-          az webapp config container set \
+          az webapp sitecontainers update \
             --name ${{ env.WEBAPP_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --container-image-name ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            --container-name ${{ env.IMAGE_NAME }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --target-port 8080 \
+            --system-assigned-identity true
 
       - name: Restart App Service
         run: az webapp restart --name ${{ env.WEBAPP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }}
