@@ -37,7 +37,8 @@ The cloud-side service that initiates syncs with the edge. Responsibilities:
   in-memory map.
 - **Sync trigger logic** — on a sync cycle (scheduled or event-driven),
   looks up the current Instrument URL for the target edge site and issues an
-  authenticated request through it to Edge Kong.
+  authenticated request through it to Edge Kong. This is a fire-and-forget 
+  pattern because we do not want the sync service to be blocked for the response from the sync operation. 
 - **Failure handling** — if a call against a stored Instrument URL fails
   (connection refused, tunnel expired), marks that entry stale and waits
   for the next registration/heartbeat rather than retrying indefinitely.
