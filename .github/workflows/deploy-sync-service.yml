@@ -47,10 +47,21 @@ jobs:
 
       - name: Point App Service at the new image
         run: |
+          MAIN_CONTAINER=$(az webapp sitecontainers list \
+            --name ${{ env.WEBAPP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            -o json | jq -r '.[] | select(.properties.isMain == true or .isMain == true) | .name' | head -n1)
+
+          if [ -z "$MAIN_CONTAINER" ]; then
+            echo "Could not determine the existing main site container name" >&2
+            exit 1
+          fi
+          echo "Main site container is: $MAIN_CONTAINER"
+
           az webapp sitecontainers update \
             --name ${{ env.WEBAPP_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
-            --container-name ${{ env.IMAGE_NAME }} \
+            --container-name "$MAIN_CONTAINER" \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
             --target-port 8080 \
             --system-assigned-identity true
