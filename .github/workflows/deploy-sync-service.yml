@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 env:
-  ACR_NAME: <your-acr-name>          # e.g. cloudedgesyncacr (no dots/dashes)
+  ACR_NAME: cloudedgesyncacr
   IMAGE_NAME: sync-service-webapi
   RESOURCE_GROUP: cloud-edge-sync-rg
   WEBAPP_NAME: sync-service-webapi
