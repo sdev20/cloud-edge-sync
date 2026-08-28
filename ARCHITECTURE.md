@@ -56,7 +56,11 @@ The cloud-side service that initiates syncs with the edge. Responsibilities:
   endpoint tests whether the currently configured Instrument URL is reachable
   (through the full tunnel → Kong → Edge Sync Service path) and reports
   `200`/`503`, without performing an actual sync. Manually triggered, not a
-  background heartbeat.
+  background heartbeat — but it's a ready-made foundation for one: a
+  possible future feature is a timer (or scheduled job) calling this same
+  endpoint periodically and alerting when it starts failing, turning today's
+  manual check into an automated heartbeat without changing the endpoint
+  itself.
 
 ### Instrument / Tunnel
 The mechanism that gives Edge Kong a publicly reachable address despite
@@ -157,3 +161,8 @@ missing, not a promise of future work:
 - **No observability** — no Kong logging or Prometheus plugins; the only
   visibility into whether the edge is reachable is the manual
   `/instrument-connection` check.
+- **No automated heartbeat.** `/instrument-connection` is on-demand only —
+  something has to actually call it. A real heartbeat (the Cloud Sync API
+  polling it on a timer and alerting on failure, or the edge side pushing a
+  periodic signal) is a natural next step building on the same endpoint;
+  just not built here.

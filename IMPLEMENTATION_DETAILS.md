@@ -82,11 +82,12 @@ gotchas hit along the way.
   `POST /external/api/instruments` on the public side becomes
   `POST /api/instruments` on the upstream side.
 
-## Connectivity check (on-demand "heartbeat")
+## Connectivity check
 
-Not an automated heartbeat — a manually-triggered endpoint that tests
-whether the full cloud → tunnel → Kong → edge path is currently reachable,
-without performing an actual instrument sync. Three pieces:
+An on-demand, manually-triggered endpoint that tests whether the full
+cloud → tunnel → Kong → edge path is currently reachable, without
+performing an actual instrument sync — a single request/response, not a
+periodic automated signal. Three pieces:
 
 - **Edge.WebAPI**: `GET api/instruments/health` on the same
   `InstrumentsController`, returns `200 OK`, no body, no business logic.
