@@ -32,6 +32,21 @@ gotchas hit along the way.
   scope may already be disposed by the time the background work runs. All
   failures are caught and logged (`ILogger`), since an unobserved exception
   in a detached task would otherwise just vanish.
+- **Swagger is registered unconditionally**, not gated behind
+  `IsDevelopment()`, in both `SyncService.WebAPI` and `Edge.WebAPI`. Azure App
+  Service defaults `ASPNETCORE_ENVIRONMENT` to `Production`, so the original
+  Development-only gate made Swagger unreachable once deployed.
+- **Forwarded headers middleware** (`app.UseForwardedHeaders(...)`, trusting
+  `X-Forwarded-For`/`X-Forwarded-Proto` with `KnownNetworks`/`KnownProxies`
+  cleared) was added to `SyncService.WebAPI`. Azure App Service terminates
+  HTTPS at its front door and forwards to the container over plain HTTP, so
+  without this the app never knew the original request was HTTPS — breaking
+  `UseHttpsRedirection()` and making `MapOpenApi()` generate `http://` server
+  URLs, which the browser then blocked as mixed content when Swagger UI
+  itself was loaded over HTTPS (surfaced as "Failed to fetch" on every
+  request). Clearing the known-networks/proxies restriction is safe here
+  specifically because App Service's front door is the only thing that can
+  reach the container over the network.
 
 
 ## Containerization
@@ -60,9 +75,11 @@ gotchas hit along the way.
   a versioned file instead.
 - One Service (`edge-sync-service`) → `http://edge-webapi:8080/api/instruments`.
 - One Route, `paths: [/external/api/instruments]`, `strip_path: true`,
-  `methods: [POST]` — this is what reconciles the route-name mismatch noted
-  above: Kong strips the matched public path and appends the Service's own
-  `path`, so `POST /external/api/instruments` on the public side becomes
+  `methods: [POST]`. The public path (`/external/api/instruments`, what
+  `SyncToInstrument` calls) doesn't match Edge.WebAPI's actual controller
+  route (`api/instruments`) — `strip_path` is what reconciles the two: Kong
+  strips the matched public path and appends the Service's own `path`, so
+  `POST /external/api/instruments` on the public side becomes
   `POST /api/instruments` on the upstream side.
 
 ## Connectivity check (on-demand "heartbeat")
@@ -103,10 +120,12 @@ a federated OIDC credential (no stored client secret) → that app granted
 `AcrPush` on the ACR and `Website Contributor` on the resource group.
 
 
-# Azure Portal Setup Checklist — ACR + App Service Deployment Pipeline
 ### GitHub Actions workflow (`.github/workflows/deploy-sync-service.yml`)
-The SyncService Web API is deployed to Azure App Service via GibHub Actions Pipeline which is under .github/workflows/deploy-sync-service.yml
 
+`SyncService.WebAPI` is deployed to Azure App Service via this GitHub
+Actions workflow.
+
+### Azure Portal setup checklist
 
 1. **Resource Group** — create it (Portal search → "Resource groups" → Create)
 2. **Container Registry (ACR)** — Portal search → "Container registries" → Create → same resource group, unique name, SKU Basic

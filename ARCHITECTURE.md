@@ -9,8 +9,13 @@ For concrete commands, config, and implementation gotchas, see
 Gateway by building a realistic cloud-to-edge topology: a cloud-hosted sync
 API that needs to reach a backend service on a private local network, where
 that network has no fixed public address. Kong sits at the edge as the
-gateway, owning routing, authentication, and rate limiting for everything
-that crosses into the local network.
+gateway, owning routing for everything that crosses into the local network.
+The original intent also included Kong-level authentication and rate
+limiting; those were never implemented before the project was stopped — see
+Known Limitations.
+
+**Project status: stopped.** This document describes the system as it was
+left, not a system still being actively extended.
 
 ## Scope & Simplifications
 
@@ -26,8 +31,8 @@ build a distributed systems project:
   heartbeat, and no in-memory map: when the tunnel URL changes, the setting
   is updated manually.
 - **Single edge site.** The design assumes one Edge Kong / Edge Sync
-  Service pair. Multi-site is a natural extension (see Future Work) but
-  adds registry and routing concerns that aren't at this point.
+  Service pair. Multi-site would be a natural extension (see Known
+  Limitations) but adds registry and routing concerns not addressed here.
 
 ## System Diagram
 
@@ -78,14 +83,18 @@ match) and how the tunnel is actually set up.
 
 ### Edge Kong
 The gateway on the local network, and the actual subject of this project.
-Owns:
+As built, it owns two Service/Route pairs (one for the actual sync push,
+one for the on-demand health check), each:
 
 - A **Service** pointing at the Edge Sync Service (host/port/path).
 - A **Route** matching the public path Cloud Sync API calls, scoped to the
-  methods actually needed.
-- **Plugins** on that Route: an auth plugin (e.g. `jwt` or `key-auth`) so
-  only the Cloud Sync API can invoke it, and `rate-limiting` scoped to that
-  Consumer so a misbehaving sync loop can't overwhelm the edge service.
+  method actually needed, with `strip_path` reconciling the public path
+  against the Edge Sync Service's own route.
+
+**Not implemented:** no plugins are attached to either Route. The original
+intent was an auth plugin (`jwt` or `key-auth`) so only the Cloud Sync API
+could invoke it, plus `rate-limiting` scoped to that Consumer — see Known
+Limitations for why this was never built.
 
 ### Edge Sync Service
 The real backend on the local network. Only reachable through Edge Kong —
@@ -97,35 +106,54 @@ never exposed directly through the tunnel.
 1. Cloud Sync API reads the configured Instrument URL from its App Settings.
 2. Issues a fire-and-forget HTTPS request to that URL.
 3. The tunnel forwards the request to Edge Kong.
-4. Edge Kong matches the request to its configured Route, runs the
-   auth and rate-limiting plugins, and proxies to the Edge Sync Service
-   via its Service definition.
+4. Edge Kong matches the request to its configured Route and proxies to the
+   Edge Sync Service via its Service definition. No auth or rate-limiting
+   plugins run — none are configured (see Known Limitations).
 5. Response travels back the same path.
 
-## Kong Configuration Model (applied to this project)
+## Kong Configuration Model (as built)
 
 | Kong object | Used as |
 |---|---|
-| **Service** | Points Edge Kong at the Edge Sync Service (`host:port` + internal path). |
+| **Service** | Points Edge Kong at the Edge Sync Service (`host:port` + internal path). Two exist — one for the sync push, one for the health check. |
 | **Route** | Defines the public-facing path/method Cloud Sync API calls; `strip_path` maps external path to the Service's internal path. |
-| **Consumer** | Represents "Cloud Sync API" as a caller, so plugins can be scoped per-Consumer. |
-| **Plugin: auth** (`jwt` or `key-auth`) | Attached to the Route; rejects any caller that isn't the Cloud Sync API Consumer. |
-| **Plugin: rate-limiting** | Attached to the Route, scoped to the Consumer; caps how often the cloud side can hit the edge service. |
-| **Upstream** | Not used initially (single Edge Sync Service instance). Documented as a future extension point if the edge service is ever scaled to multiple instances. |
+| **Upstream** | Not used (single Edge Sync Service instance, so no load balancing is needed). |
+
+**Not built:** Consumer, an auth plugin (`jwt`/`key-auth`), a rate-limiting
+plugin. See Known Limitations.
 
 ## Security Considerations
 
-- Preferring `jwt` over `key-auth` for the Cloud Sync API → Edge Kong hop
-  avoids distributing a long-lived shared secret across the tunnel; the
-  cloud side signs a short-lived token per call instead.
-- The Edge Sync Service should never be reachable except through Edge
-  Kong — no direct tunnel exposure.
+- **No authentication on either Kong Route.** Anyone who obtains the tunnel
+  URL can POST arbitrary instrument data or hit the health check — this is
+  the most significant gap left open when the project was stopped. Had auth
+  been built, `jwt` was the intended choice over `key-auth`, since it avoids
+  distributing a long-lived shared secret across the tunnel (the cloud side
+  would sign a short-lived token per call instead) — see Known Limitations.
+- The Edge Sync Service should never be reachable except through Edge Kong
+  **from the public internet** — the tunnel only ever exposes Kong's proxy
+  port. Locally, `edge-webapi` is also published on `:5160` as a deliberate
+  direct-debug exception (see IMPLEMENTATION_DETAILS.md) — not reachable
+  from outside the local network, but worth knowing it bypasses Kong
+  entirely when used.
 
-## Non-Goals / Future Work
+## Known Limitations
 
-- Multi-edge-site support (would require introducing a real registry —
-  something like the originally-considered Admin Service — since a single
-  config value can't hold per-site URLs).
-- Kong Upstream + multiple Edge Sync Service Targets with health checks.
-- Observability (Kong logging/Prometheus plugins) — worth adding once the
-  base path works end-to-end.
+This is where the project was stopped. Kept as an honest record of what's
+missing, not a promise of future work:
+
+- **No Kong authentication** (`jwt` or `key-auth`) on either Route — both
+  are open to anyone with the tunnel URL.
+- **No Kong rate-limiting** — nothing stops a misbehaving sync loop, or an
+  outsider, from flooding either Route.
+- **No Consumer defined** — a prerequisite for both of the above; Kong's
+  auth and per-caller rate-limiting plugins both authenticate/scope against
+  a Consumer.
+- **Single edge site only** — multi-site support would require a real
+  registry (something like the originally-considered Admin Service), since
+  a single config value can't hold per-site URLs.
+- **No Kong Upstream / load balancing** — fine for one Edge Sync Service
+  instance, would matter if the edge service were ever scaled out.
+- **No observability** — no Kong logging or Prometheus plugins; the only
+  visibility into whether the edge is reachable is the manual
+  `/instrument-connection` check.
