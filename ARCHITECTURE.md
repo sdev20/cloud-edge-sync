@@ -1,5 +1,8 @@
 # Architecture
 
+For concrete commands, config, and implementation gotchas, see
+[IMPLEMENTATION_DETAILS.md](IMPLEMENTATION_DETAILS.md).
+
 ## Overview
 
 `cloud-edge-sync` is a hands-on reference project for learning Kong API
@@ -45,9 +48,13 @@ The cloud-side service that initiates syncs with the edge. Responsibilities:
 
 ### Instrument / Tunnel
 The mechanism that gives Edge Kong a publicly reachable address despite
-sitting on a NAT'd/private local network. Infrastructure choice (Cloudflare Tunnel, ngrok, frp, Tailscale Funnel).
-The tunnel's public URL is exactly the "Instrument URL" the Cloud Sync API
-stores.
+sitting on a NAT'd/private local network. Chosen: **Cloudflare Tunnel** — an
+outbound-only connection from the local network to Cloudflare's edge, so no
+static IP, inbound firewall rule, or VPN hardware is needed. The tunnel's
+public URL is exactly the "Instrument URL" the Cloud Sync API stores. See
+[IMPLEMENTATION_DETAILS.md](IMPLEMENTATION_DETAILS.md) for the alternatives
+considered (ngrok, Azure VPN Gateway, Azure Relay Hybrid Connections) and how
+the tunnel is actually set up.
 
 ### Edge Kong
 The gateway on the local network, and the actual subject of this project.
