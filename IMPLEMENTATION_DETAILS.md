@@ -140,6 +140,13 @@ The SyncService Web API is deployed to Azure App Service via GibHub Actions Pipe
 - The assigned `*.trycloudflare.com` URL changes every time `cloudflared`
   restarts (inherent to quick-tunnel mode, not a bug) — a named tunnel (free
   Cloudflare account + a domain) would give a stable one instead.
+- **Before assuming the tunnel is up, check the current URL rather than
+  reusing an old one from memory/history** — grep the running process's log
+  for the actual current hostname:
+  `grep "trycloudflare.com" /tmp/cloudflared.log | tail -1`. It's easy to
+  paste a URL from an earlier session that's since died (see Troubleshooting
+  below) or been replaced by a fresh restart; always confirm against the log
+  before testing or updating the Azure App Setting.
 - Set as the `InstrumentConfiguration__InstrumentUri` **Application Setting**
   on the `sync-service-webapi` Web App Azure App service appsettings.
 - Verified end-to-end (not just "got a 200"): a request from outside the
