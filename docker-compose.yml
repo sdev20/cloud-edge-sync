@@ -4,6 +4,8 @@ services:
       context: ./Edge.WebAPI/Edge.WebAPI
       dockerfile: Dockerfile
     container_name: edge-webapi
+    ports:
+      - "5160:8080"
     networks:
       - edge-network
 
