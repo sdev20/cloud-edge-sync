@@ -147,5 +147,41 @@ The SyncService Web API is deployed to Azure App Service via GibHub Actions Pipe
   response headers (`via: 1.1 kong/3.9.3`, `x-kong-proxy-latency`,
   `x-kong-request-id`), and separately, Edge.WebAPI's own application log
   showed the request actually reaching controller code
-  (`Received instrument update via sync: ...`). - So if you send request with cloudfared URL
-  https://reel-leu-propecia-requires.trycloudflare.com/external/api/instruments and see the request comes to the Edge WebAPI in the logs
+  (`Received instrument update via sync: ...`).
+
+### Troubleshooting: quick tunnel died silently
+
+Hit this in practice, not hypothetically — `GET /instrument-connection` on
+the deployed Sync API started returning `503` with no code change on either
+side. Diagnosis, in the order actually done:
+
+1. Checked whether the local pieces were even running:
+   `pgrep -fl cloudflared` and `docker compose ps` — `cloudflared`'s process
+   was alive, Kong and Edge.WebAPI both showed healthy. **This was a red
+   herring** — a process being alive says nothing about whether its tunnel
+   connection is actually up.
+2. Curled the tunnel's public URL directly: `curl: (6) Could not resolve
+   host`. DNS resolution failing for the tunnel's own hostname meant
+   Cloudflare's edge no longer recognized it — a stronger signal than the
+   local process check.
+3. Checked `cloudflared`'s own log (piped to `/tmp/cloudflared.log` via
+   `nohup ... > /tmp/cloudflared.log 2>&1 &` when it was started) and found
+   it stuck in a reconnect loop: `ERR failed to serve tunnel connection
+   error="control stream encountered a failure while serving"`, retrying
+   every ~30s–1m and never succeeding. This confirmed the underlying
+   connection to Cloudflare's edge had genuinely broken — exactly the "no
+   uptime guarantee" behavior Cloudflare's own quick-tunnel startup message
+   warns about for account-less tunnels.
+
+Fix: killed the stuck process (`kill <pid>`) and started a completely fresh
+quick tunnel with the same command as before. Quick tunnels don't preserve
+identity across restarts, so this issues a **new** hostname — verified it
+worked (`curl` to the health route through it, got `200` with Kong's
+headers), then updated `InstrumentConfiguration__InstrumentUri` on Azure to
+the new URL.
+
+This is the actual operational cost of quick-tunnel mode: it can die with no
+alert, and noticing requires either `/instrument-connection` reporting `503`
+or manually checking. A named tunnel (Cloudflare account + a domain) would
+at least give a stable hostname so the URL doesn't also need updating every
+time — worth revisiting if this recurs often enough to be annoying.
