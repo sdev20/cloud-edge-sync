@@ -3,8 +3,7 @@
 This is the companion to [ARCHITECTURE.md](ARCHITECTURE.md) — that file describes
 *what the system is and why it's shaped this way*; this one tracks *how it was
 actually built*: concrete commands, config, choices between options, and the
-gotchas hit along the way. Update this as implementation continues; keep
-`ARCHITECTURE.md` stable unless the design itself changes.
+gotchas hit along the way.
 
 ## Repo layout
 
@@ -25,11 +24,6 @@ gotchas hit along the way. Update this as implementation continues; keep
 
 ## Cloud Sync API (SyncService.WebAPI)
 
-- DI wiring lives in `Program.cs`: `InMemoryDataStore` is `Singleton` (state
-  must survive across requests), `IInstrumentService` is `Scoped`,
-  `ISyncToInstrument`/`SyncToInstrument` is a typed `HttpClient`
-  (`AddHttpClient<TInterface, TImpl>`) whose `BaseAddress` is set from
-  `InstrumentConfiguration.InstrumentUri` at resolution time.
 - `InstrumentService.UpdateInstrument` pushes the update to the edge
   **fire-and-forget**, not awaited — the local write shouldn't block on the
   edge/tunnel being reachable. It resolves `ISyncToInstrument` from a **new**
@@ -38,23 +32,7 @@ gotchas hit along the way. Update this as implementation continues; keep
   scope may already be disposed by the time the background work runs. All
   failures are caught and logged (`ILogger`), since an unobserved exception
   in a detached task would otherwise just vanish.
-- Swagger (`AddOpenApi()` + `Swashbuckle.AspNetCore.SwaggerUI`) is registered
-  **unconditionally**, not gated behind `IsDevelopment()`. Azure App Service
-  defaults `ASPNETCORE_ENVIRONMENT` to `Production`, so the original
-  Development-only gate made Swagger unreachable once deployed. Same fix
-  applied to `Edge.WebAPI`.
 
-## Edge Sync Service (Edge.WebAPI)
-
-- `InstrumentsController` — `POST api/instruments`, deserializes into a local
-  `InstrumentUpdateRequest` record (not the cloud side's `Instrument` type —
-  no shared assembly on purpose), logs the payload at `Information`, returns
-  `200 OK`.
-- Route mismatch, reconciled in Kong rather than in code: `SyncToInstrument`
-  posts to `/external/api/instruments`; `InstrumentsController` actually
-  listens on `api/instruments`. Kong's `strip_path: true` + the Service's
-  `path` bridges the two (see Kong section below) — a deliberate example of
-  Kong doing path translation rather than a bug to fix in the app.
 
 ## Containerization
 
@@ -97,60 +75,24 @@ identity on the Web App granted `AcrPull` on the ACR → App Registration with
 a federated OIDC credential (no stored client secret) → that app granted
 `AcrPush` on the ACR and `Website Contributor` on the resource group.
 
+
+# Azure Portal Setup Checklist — ACR + App Service Deployment Pipeline
 ### GitHub Actions workflow (`.github/workflows/deploy-sync-service.yml`)
+The SyncService Web API is deployed to Azure App Service via GibHub Actions Pipeline which is under .github/workflows/deploy-sync-service.yml
 
-- OIDC login via `azure/login@v2`, authenticating as the App Registration —
-  needs `permissions: id-token: write` at the job/workflow level or the
-  token request fails outright.
-- **ACR login workaround:** plain `az acr login` is flaky on GitHub-hosted
-  runners ([Azure/azure-cli#26371](https://github.com/Azure/azure-cli/issues/26371)).
-  Fixed by pulling a raw token via `--expose-token` and piping it straight
-  into `docker login` instead of letting `az acr login` do its own
-  AAD-to-Docker exchange.
-- **Deploying the image — the App Service is on the newer "sitecontainers"
-  (sidecar/multi-container) model, not the classic single-container one.**
-  `az webapp config container set` (the classic command) silently doesn't
-  apply to this model — using it left the site falling back to admin
-  credentials (disabled on the ACR) and returning 503s. The correct command
-  is `az webapp sitecontainers update`, which has its own
-  `--system-assigned-identity` flag.
-- The site container's actual **name** isn't assumed to be fixed — it's
-  looked up dynamically at the start of every run
-  (`az webapp sitecontainers list | jq ...`) rather than hardcoded, because
-  it drifted between `main` and `sync-service-webapi` depending on Portal
-  state (see gotchas below). Looking it up avoids hardcoding a name that can
-  change out from under the pipeline.
-- The `push` trigger is path-filtered to `SyncService.WebAPI/**` and the
-  workflow file itself, so edge-side/Kong changes don't trigger a cloud
-  redeploy. `workflow_dispatch` is also enabled as a manual escape hatch.
 
-### Gotchas hit along the way (worth knowing if reproducing this)
-
-- **New Azure subscriptions can have a 0 default vCPU quota** for a given
-  region/SKU family (`SubscriptionIsOverQuotaForSku`). Fastest fix: try
-  creating the App Service Plan in a different region; otherwise request a
-  quota increase via the Portal's "Quotas" page.
-- **GitHub's OIDC subject claim format changed.** Repos created after
-  2026-07-15 use immutable subject claims —
-  `repo:org@ownerID/repo@repoID:ref:refs/heads/branch` instead of the classic
-  `repo:org/repo:ref:refs/heads/branch`. The federated credential's Subject
-  in Azure has to match exactly what GitHub actually sends, which for a new
-  repo is the ID-based form.
-  ([GitHub changelog](https://github.blog/changelog/2026-04-23-immutable-subject-claims-for-github-actions-oidc-tokens/))
-- **Azure Portal's Deployment Center has its own "Connect to GitHub" flow**
-  that — separately from any hand-written workflow — auto-generates and
-  pushes its own competing workflow file, creates its own GitHub secrets, and
-  configures the site container itself. Having both running against the same
-  Web App caused the site container to end up with two entries both flagged
-  `isMain=true` (`main` and `sync-service-webapi`), which made
-  `sitecontainers update` fail no matter which name was used until the extra
-  one was deleted. Fix: disconnect Deployment Center's GitHub source if
-  you're maintaining your own workflow, and clean up any duplicate
-  `isMain=true` containers via `az webapp sitecontainers list` /`delete`.
-- Local reproduction is a fast way to separate "code bug" from "Azure-specific
-  problem": building and running the exact same `Dockerfile` locally
-  (`docker build` + `docker run` + `curl`) confirmed the Swagger 404 was not
-  a code issue before spending more time on the Azure side.
+1. **Resource Group** — create it (Portal search → "Resource groups" → Create)
+2. **Container Registry (ACR)** — Portal search → "Container registries" → Create → same resource group, unique name, SKU Basic
+3. **App Service Plan** — Portal search → "App Service plans" → Create → same resource group, **Linux**, **Basic B1** (Free F1 doesn't support containers)
+4. **Web App** — Portal search → "App Services" → Create → Web App → **Publish: Docker Container** → select the plan → Docker tab: Single Container, Image Source: Docker Hub, placeholder image `mcr.microsoft.com/dotnet/aspnet:10.0` (pipeline overwrites this later)
+5. **Managed identity on the Web App** — Web App → **Identity** → System assigned → On → Save
+6. **Grant `AcrPull`** — ACR → **Access control (IAM)** → Add role assignment → Role: `AcrPull` → Assign to: Managed identity → select the Web App's identity
+7. **App Registration** — Portal search → "App registrations" → New registration → note the **Application (client) ID** and **Directory (tenant) ID**
+8. **Federated credential** — App Registration → Certificates & secrets → Federated credentials → Add credential → Scenario: GitHub Actions → org/repo/branch (`main`)
+9. **Grant `AcrPush`** — ACR → IAM → Add role assignment → Role: `AcrPush` → Assign to: the App Registration (search by name)
+10. **Grant `Website Contributor`** — Resource Group → IAM → Add role assignment → Role: `Website Contributor` → Assign to: the same App Registration
+11. **GitHub secrets** — repo → Settings → Secrets and variables → Actions → add `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (subscription ID from Portal search → "Subscriptions")
+12. **Site container config** — Web App → Deployment Center → Containers → Add container: Image source **Azure Container Registry**, Authentication **Managed Identity** (System assigned), fill in Image/Tag/Port manually (required when using managed identity)
 
 ## Cloudflare Tunnel (the "Instrument URL")
 
@@ -163,13 +105,11 @@ a federated OIDC credential (no stored client secret) → that app granted
   restarts (inherent to quick-tunnel mode, not a bug) — a named tunnel (free
   Cloudflare account + a domain) would give a stable one instead.
 - Set as the `InstrumentConfiguration__InstrumentUri` **Application Setting**
-  on the `sync-service-webapi` Web App (Environment variables /
-  Configuration blade), not in `appsettings.json` — this is exactly why that
-  value was left blank in the checked-in config: so it can be updated without
-  a code change or redeploy whenever the tunnel URL changes.
+  on the `sync-service-webapi` Web App Azure App service appsettings.
 - Verified end-to-end (not just "got a 200"): a request from outside the
   local network to the public tunnel URL came back with Kong-specific
   response headers (`via: 1.1 kong/3.9.3`, `x-kong-proxy-latency`,
   `x-kong-request-id`), and separately, Edge.WebAPI's own application log
   showed the request actually reaching controller code
-  (`Received instrument update via sync: ...`).
+  (`Received instrument update via sync: ...`). - So if you send request with cloudfared URL
+  https://reel-leu-propecia-requires.trycloudflare.com/external/api/instruments and see the request comes to the Edge WebAPI in the logs
