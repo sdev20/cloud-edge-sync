@@ -19,8 +19,12 @@ inspectable system, since the goal is to get hands-on with Kong, not to
 build a distributed systems project:
 
 
-- **In-memory edge Kong URL storage.** The Cloud Sync API keeps a simple
-  in-memory map of `edge-site-id -> kong URL` and we refer it as **Instrument URL**
+- **Config-based edge Kong URL, not a registry.** The Cloud Sync API reads
+  the current edge Kong URL — the **Instrument URL** — from its own
+  configuration (`InstrumentConfiguration:InstrumentUri`, set as an Azure App
+  Service Application Setting). There is no registration endpoint, no
+  heartbeat, and no in-memory map: when the tunnel URL changes, the setting
+  is updated manually.
 - **Single edge site.** The design assumes one Edge Kong / Edge Sync
   Service pair. Multi-site is a natural extension (see Future Work) but
   adds registry and routing concerns that aren't at this point.
@@ -35,16 +39,16 @@ build a distributed systems project:
 ### Cloud Sync API (Azure)
 The cloud-side service that initiates syncs with the edge. Responsibilities:
 
-- **Registration endpoint** — accepts a heartbeat/registration call from
-  the edge side containing its current Instrument URL, and updates the
-  in-memory map.
-- **Sync trigger logic** — on a sync cycle (scheduled or event-driven),
-  looks up the current Instrument URL for the target edge site and issues an
-  authenticated request through it to Edge Kong. This is a fire-and-forget 
-  pattern because we do not want the sync service to be blocked for the response from the sync operation. 
-- **Failure handling** — if a call against a stored Instrument URL fails
-  (connection refused, tunnel expired), marks that entry stale and waits
-  for the next registration/heartbeat rather than retrying indefinitely.
+- **Sync trigger logic** — on an instrument update, looks up the configured
+  Instrument URL and issues a request through it to Edge Kong. This is a
+  fire-and-forget pattern: the local write completes and returns immediately
+  without waiting on the edge/tunnel round-trip, so a slow or unreachable
+  edge never blocks the caller.
+- **Failure handling** — currently just logging. If the fire-and-forget call
+  fails (connection refused, tunnel expired), it's logged as a warning/error
+  and nothing else happens — no retry, no stale-marking, no alerting. There's
+  no automated way today to know the edge is unreachable without reading the
+  logs (see Non-Goals/Future Work).
 
 ### Instrument / Tunnel
 The mechanism that gives Edge Kong a publicly reachable address despite
@@ -73,14 +77,9 @@ never exposed directly through the tunnel.
 
 ## Data Flow
 
-**Registration (edge → cloud):**
-
-1. Cloud Sync API updates its in-memory map for that edge site when registered with the endpoint available.
-2. Performs a heartbeat call to detect a dead edge site.
-
 **Sync (cloud → edge):**
-1. Cloud Sync API looks up the Instrument URL for the target edge site.
-2. Issues an authenticated HTTPS request to that URL.
+1. Cloud Sync API reads the configured Instrument URL from its App Settings.
+2. Issues a fire-and-forget HTTPS request to that URL.
 3. The tunnel forwards the request to Edge Kong.
 4. Edge Kong matches the request to its configured Route, runs the
    auth and rate-limiting plugins, and proxies to the Edge Sync Service
@@ -100,10 +99,6 @@ never exposed directly through the tunnel.
 
 ## Security Considerations
 
-- The registration endpoint on Cloud Sync API is itself a trust boundary —
-  anything that can call it can redirect where syncs get sent. For a
-  learning project this can stay unauthenticated or use a shared secret;
-  call this out explicitly as a known simplification, not an oversight.
 - Preferring `jwt` over `key-auth` for the Cloud Sync API → Edge Kong hop
   avoids distributing a long-lived shared secret across the tunnel; the
   cloud side signs a short-lived token per call instead.
@@ -112,8 +107,12 @@ never exposed directly through the tunnel.
 
 ## Non-Goals / Future Work
 
-- Multi-edge-site support (would reintroduce something like an Admin
-  Service, or promote the in-memory map to a real registry/database).
+- Multi-edge-site support (would require introducing a real registry —
+  something like the originally-considered Admin Service — since a single
+  config value can't hold per-site URLs).
+- A way to know the edge is unreachable without reading logs — e.g. a
+  connectivity/health-check endpoint on the Cloud Sync API that tests the
+  configured Instrument URL on demand.
 - Kong Upstream + multiple Edge Sync Service Targets with health checks.
 - Observability (Kong logging/Prometheus plugins) — worth adding once the
   base path works end-to-end.
