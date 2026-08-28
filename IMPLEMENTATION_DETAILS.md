@@ -65,6 +65,33 @@ gotchas hit along the way.
   `path`, so `POST /external/api/instruments` on the public side becomes
   `POST /api/instruments` on the upstream side.
 
+## Connectivity check (on-demand "heartbeat")
+
+Not an automated heartbeat — a manually-triggered endpoint that tests
+whether the full cloud → tunnel → Kong → edge path is currently reachable,
+without performing an actual instrument sync. Three pieces:
+
+- **Edge.WebAPI**: `GET api/instruments/health` on the same
+  `InstrumentsController`, returns `200 OK`, no body, no business logic.
+- **`edge-kong/kong.yml`**: a dedicated Service + Route, not reusing the
+  existing POST route — `edge-sync-service-health` →
+  `http://edge-webapi:8080/api/instruments/health`, Route
+  `paths: [/external/api/instruments/health]`, `strip_path: true`,
+  `methods: [GET]`. Kept separate from the sync Route so the two concerns
+  (pushing data vs. checking reachability) don't share method/path handling.
+- **SyncService.WebAPI**: `ISyncToInstrument.CheckConnectivityAsync` issues a
+  `GET` through the same `HttpClient` already pointed at `InstrumentUri`,
+  catching `HttpRequestException` and a genuine `TaskCanceledException`
+  timeout (filtered with `when (!cancellationToken.IsCancellationRequested)`
+  so caller-initiated cancellation still propagates normally) and returning
+  `false` rather than throwing — this is meant to report reachability, not
+  bubble up a 500 when the edge is down. Exposed via a new
+  `InstrumentConnectionController` at `GET /instrument-connection`, returning
+  `200` if reachable, `503` if not.
+
+Verified locally both directions: pointed at a live local Kong instance →
+`200`; pointed at a port nothing was listening on → clean `503`, not a crash.
+
 ## Azure deployment pipeline (SyncService.WebAPI → ACR → App Service)
 
 ### Provisioning (`scripts/provision-azure.sh`)
@@ -95,6 +122,15 @@ The SyncService Web API is deployed to Azure App Service via GibHub Actions Pipe
 12. **Site container config** — Web App → Deployment Center → Containers → Add container: Image source **Azure Container Registry**, Authentication **Managed Identity** (System assigned), fill in Image/Tag/Port manually (required when using managed identity)
 
 ## Cloudflare Tunnel (the "Instrument URL")
+
+**Connectivity options considered:**
+
+| Option | Cost | Why / why not |
+|---|---|---|
+| **Cloudflare Tunnel (chosen)** | Free (quick-tunnel, no account) | Outbound-only from the local network to Cloudflare's edge — no static IP, no inbound firewall rule, no VPN hardware. A named tunnel (free Cloudflare account + a domain) gives a stable URL instead of quick-tunnel's ephemeral one. |
+| **ngrok** | Free tier, but now requires an account even for temporary tunnels | Same outbound-tunnel shape as Cloudflare Tunnel; a viable alternative if you don't mind the signup. |
+| **Azure VPN Gateway (Site-to-Site)** | ~$27+/month minimum, continuously billed even idle | The real enterprise pattern — likely what a previous employer used for office-to-Azure connectivity. Requires a static/stable public IP (or supported IPsec router) on the local side, which a home network behind CGNAT doesn't have. Wrong tool here on fit, not just cost. |
+| **Azure Relay Hybrid Connections** | Usage-billed: hourly per listener + data overage beyond 5 GB/month free per listener | The closer Azure-native match to a tunnel — a local agent makes an outbound connection to Azure Relay, no static IP needed, first-class App Service integration. Reasonable alternative to Cloudflare Tunnel if staying Azure-native mattered more than it did here. |
 
 - Installed via `brew install cloudflared`.
 - Quick tunnel (free, no account): `cloudflared tunnel --url http://localhost:8000`

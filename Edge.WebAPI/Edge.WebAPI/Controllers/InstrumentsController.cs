@@ -16,4 +16,7 @@ public class InstrumentsController(ILogger<InstrumentsController> logger) : Cont
 
         return Ok();
     }
+
+    [HttpGet("health")]
+    public IActionResult Health() => Ok();
 }

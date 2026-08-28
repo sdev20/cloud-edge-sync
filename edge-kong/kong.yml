@@ -12,3 +12,13 @@ services:
         strip_path: true
         methods:
           - POST
+
+  - name: edge-sync-service-health
+    url: http://edge-webapi:8080/api/instruments/health
+    routes:
+      - name: edge-sync-service-health-route
+        paths:
+          - /external/api/instruments/health
+        strip_path: true
+        methods:
+          - GET

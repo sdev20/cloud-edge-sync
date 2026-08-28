@@ -7,4 +7,6 @@ public interface ISyncToInstrument
     Task<bool> SendInstrumentAsync(Instrument instrument, CancellationToken cancellationToken = default);
 
     Task<bool> SendInstrumentsAsync(IReadOnlyCollection<Instrument> instruments, CancellationToken cancellationToken = default);
+
+    Task<bool> CheckConnectivityAsync(CancellationToken cancellationToken = default);
 }

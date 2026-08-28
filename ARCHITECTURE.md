@@ -46,19 +46,35 @@ The cloud-side service that initiates syncs with the edge. Responsibilities:
   edge never blocks the caller.
 - **Failure handling** — currently just logging. If the fire-and-forget call
   fails (connection refused, tunnel expired), it's logged as a warning/error
-  and nothing else happens — no retry, no stale-marking, no alerting. There's
-  no automated way today to know the edge is unreachable without reading the
-  logs (see Non-Goals/Future Work).
+  and nothing else happens — no retry, no stale-marking, no alerting.
+- **On-demand connectivity check** — a separate `GET /instrument-connection`
+  endpoint tests whether the currently configured Instrument URL is reachable
+  (through the full tunnel → Kong → Edge Sync Service path) and reports
+  `200`/`503`, without performing an actual sync. Manually triggered, not a
+  background heartbeat.
 
 ### Instrument / Tunnel
 The mechanism that gives Edge Kong a publicly reachable address despite
 sitting on a NAT'd/private local network. Chosen: **Cloudflare Tunnel** — an
 outbound-only connection from the local network to Cloudflare's edge, so no
 static IP, inbound firewall rule, or VPN hardware is needed. The tunnel's
-public URL is exactly the "Instrument URL" the Cloud Sync API stores. See
-[IMPLEMENTATION_DETAILS.md](IMPLEMENTATION_DETAILS.md) for the alternatives
-considered (ngrok, Azure VPN Gateway, Azure Relay Hybrid Connections) and how
-the tunnel is actually set up.
+public URL is exactly the "Instrument URL" the Cloud Sync API stores.
+
+**Why not the "real-world" enterprise option?** The equivalent pattern in a
+company network is typically **Azure VPN Gateway (Site-to-Site)** — a
+persistent IPsec tunnel between an on-prem router and an Azure VNet. That's
+genuinely the right tool when the "site" is an office with business-grade
+internet and a static (or at least stable) public IP, which is exactly the
+environment it's designed for. It's the wrong tool here specifically because
+a home network sits behind CGNAT with a dynamic IP — there's no stable
+address for Azure's side of the tunnel to target — and separately, Azure VPN
+Gateway is a continuously-billed resource (real cost even sitting idle),
+whereas a home-lab/portfolio project has no ongoing budget to justify that.
+Cloudflare Tunnel sidesteps the static-IP requirement entirely by making the
+connection outbound-only, and costs nothing for this use case. See
+[IMPLEMENTATION_DETAILS.md](IMPLEMENTATION_DETAILS.md) for the full
+comparison (including Azure Relay Hybrid Connections, the closer Azure-native
+match) and how the tunnel is actually set up.
 
 ### Edge Kong
 The gateway on the local network, and the actual subject of this project.
@@ -110,9 +126,6 @@ never exposed directly through the tunnel.
 - Multi-edge-site support (would require introducing a real registry —
   something like the originally-considered Admin Service — since a single
   config value can't hold per-site URLs).
-- A way to know the edge is unreachable without reading logs — e.g. a
-  connectivity/health-check endpoint on the Cloud Sync API that tests the
-  configured Instrument URL on demand.
 - Kong Upstream + multiple Edge Sync Service Targets with health checks.
 - Observability (Kong logging/Prometheus plugins) — worth adding once the
   base path works end-to-end.

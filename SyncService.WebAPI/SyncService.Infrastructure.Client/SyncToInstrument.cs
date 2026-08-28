@@ -7,6 +7,7 @@ namespace SyncService.Infrastructure.Client;
 public class SyncToInstrument(HttpClient httpClient) : ISyncToInstrument
 {
     private const string InstrumentUpdateRoute = "/external/api/instruments";
+    private const string InstrumentHealthRoute = "/external/api/instruments/health";
 
     public async Task<bool> SendInstrumentAsync(Instrument instrument, CancellationToken cancellationToken = default)
     {
@@ -18,5 +19,22 @@ public class SyncToInstrument(HttpClient httpClient) : ISyncToInstrument
     {
         var response = await httpClient.PostAsJsonAsync(InstrumentUpdateRoute, instruments, cancellationToken);
         return response.IsSuccessStatusCode;
+    }
+
+    public async Task<bool> CheckConnectivityAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await httpClient.GetAsync(InstrumentHealthRoute, cancellationToken);
+            return response.IsSuccessStatusCode;
+        }
+        catch (HttpRequestException)
+        {
+            return false;
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
     }
 }
